@@ -1,0 +1,9 @@
+{
+  "entity.blood_dead.corpse": "Cadáver del Jugador",
+  "particle.blood_dead.blood_drip": "Gota de Sangre",
+  "particle.blood_dead.blood_splash": "Salpicadura de Sangre",
+  "particle.blood_dead.blood_stain_permanent": "Mancha de Sangre Permanente",
+  "particle.blood_dead.blood_stain_temporary": "Mancha de Sangre Temporal",
+  "gamerule.anatomyBloodPersistCorpseOnRespawn": "Mantener Cadáver al Reaparecer",
+  "gamerule.anatomyBloodDespawnBlood": "Desaparición de Manchas de Sangre"
+}

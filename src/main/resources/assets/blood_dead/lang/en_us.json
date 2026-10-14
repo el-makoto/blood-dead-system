@@ -1,0 +1,9 @@
+{
+  "entity.blood_dead.corpse": "Player Corpse",
+  "particle.blood_dead.blood_drip": "Blood Drip",
+  "particle.blood_dead.blood_splash": "Blood Splash",
+  "particle.blood_dead.blood_stain_permanent": "Permanent Blood Stain",
+  "particle.blood_dead.blood_stain_temporary": "Temporary Blood Stain",
+  "gamerule.anatomyBloodPersistCorpseOnRespawn": "Persist Player Corpse On Respawn",
+  "gamerule.anatomyBloodDespawnBlood": "Blood Stain Despawns Over Time"
+}
