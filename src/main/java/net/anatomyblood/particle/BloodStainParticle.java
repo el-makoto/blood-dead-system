@@ -15,9 +15,16 @@ import net.minecraft.particle.SimpleParticleType;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 
+import java.util.Collections;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+
 @Environment(EnvType.CLIENT)
 public class BloodStainParticle extends SpriteBillboardParticle {
+    public static final Set<BloodStainParticle> ACTIVE_STAINS = Collections.newSetFromMap(new ConcurrentHashMap<>());
     private final boolean permanent;
+
+    protected float currentAlpha = 0.88f;
 
     public BloodStainParticle(ClientWorld world, double x, double y, double z, SpriteProvider spriteProvider, boolean permanent) {
         super(world, x, y, z, 0.0D, 0.0D, 0.0D);
@@ -27,7 +34,62 @@ public class BloodStainParticle extends SpriteBillboardParticle {
         this.setColor(BloodConstants.BLOOD_RED, BloodConstants.BLOOD_GREEN, BloodConstants.BLOOD_BLUE);
         this.scale = 0.6f + this.random.nextFloat() * 0.6f;
         this.maxAge = permanent ? 2000000000 : 6000;
+        this.currentAlpha = 0.88f;
         this.setSprite(spriteProvider);
+        ACTIVE_STAINS.add(this);
+    }
+
+    public static void clearAllStains() {
+        for (BloodStainParticle p : ACTIVE_STAINS) {
+            p.markDead();
+        }
+        ACTIVE_STAINS.clear();
+    }
+
+    /**
+     * Decreases the opacity of the stain by a brush stroke.
+     * Returns true if the stain was completely cleaned and marked dead.
+     */
+    public boolean brushClean(float amount) {
+        this.currentAlpha -= amount;
+        if (this.currentAlpha <= 0.08f) {
+            this.markDead();
+            ACTIVE_STAINS.remove(this);
+            return true;
+        }
+        return false;
+    }
+
+    public static boolean hasStainNear(double x, double y, double z, double radius) {
+        double rSq = radius * radius;
+        for (BloodStainParticle p : ACTIVE_STAINS) {
+            if (p.isAlive()) {
+                double dx = p.x - x;
+                double dy = p.y - y;
+                double dz = p.z - z;
+                if (dx * dx + dy * dy + dz * dz <= rSq) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    public static int cleanBloodNear(double x, double y, double z, double radius, float amount) {
+        double rSq = radius * radius;
+        int cleaned = 0;
+        for (BloodStainParticle p : ACTIVE_STAINS) {
+            if (p.isAlive()) {
+                double dx = p.x - x;
+                double dy = p.y - y;
+                double dz = p.z - z;
+                if (dx * dx + dy * dy + dz * dz <= rSq) {
+                    p.brushClean(amount);
+                    cleaned++;
+                }
+            }
+        }
+        return cleaned;
     }
 
     @Override
@@ -44,12 +106,11 @@ public class BloodStainParticle extends SpriteBillboardParticle {
         float vMax = this.getMaxV();
         int light = this.getBrightness(tickDelta);
 
-        // Fade out alpha only if temporary and near end of life
-        if (!permanent && this.age > this.maxAge - 100) {
-            this.alpha = Math.max(0.0f, (float) (this.maxAge - this.age) / 100.0f);
-        } else {
-            this.alpha = 1.0f;
-        }
+        // Fade out alpha if temporary and near end of life
+        float ageAlpha = (!permanent && this.age > this.maxAge - 100)
+                ? Math.max(0.0f, (float) (this.maxAge - this.age) / 100.0f)
+                : 1.0f;
+        this.alpha = this.currentAlpha * ageAlpha;
 
         // Lay flat on top face of the block
         vertexConsumer.vertex(x - size, y, z - size).texture(uMin, vMin).color(this.red, this.green, this.blue, this.alpha).light(light);

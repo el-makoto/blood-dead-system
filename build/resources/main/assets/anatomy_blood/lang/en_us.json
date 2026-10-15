@@ -1,9 +1,0 @@
-{
-  "entity.anatomy_blood.corpse": "Player Corpse",
-  "particle.anatomy_blood.blood_drip": "Blood Drip",
-  "particle.anatomy_blood.blood_splash": "Blood Splash",
-  "particle.anatomy_blood.blood_stain_permanent": "Permanent Blood Stain",
-  "particle.anatomy_blood.blood_stain_temporary": "Temporary Blood Stain",
-  "gamerule.anatomyBloodPersistCorpseOnRespawn": "Persist Player Corpse On Respawn",
-  "gamerule.anatomyBloodDespawnBlood": "Blood Stain Despawns Over Time"
-}

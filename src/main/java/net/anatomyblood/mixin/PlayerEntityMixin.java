@@ -47,7 +47,9 @@ public abstract class PlayerEntityMixin {
                     double y = player.getY() + 0.05D;
                     double z = player.getZ();
 
-                    serverWorld.spawnParticles(stainParticle, x, y, z, 2, 0.2D, 0.0D, 0.2D, 0.0D);
+                    if (player.isOnGround()) {
+                        serverWorld.spawnParticles(stainParticle, x, y, z, 2, 0.2D, 0.0D, 0.2D, 0.0D);
+                    }
                     serverWorld.spawnParticles(ModParticles.BLOOD_DRIP, x, y + 0.5D, z, 3, 0.1D, 0.1D, 0.1D, 0.05D);
                 }
             }

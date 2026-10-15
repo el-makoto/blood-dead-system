@@ -17,11 +17,16 @@ import net.minecraft.client.render.entity.model.EntityModelLayers;
 import net.minecraft.client.render.entity.model.PlayerEntityModel;
 import net.minecraft.client.render.entity.state.PlayerEntityRenderState;
 import net.minecraft.client.util.DefaultSkinHelper;
+import net.minecraft.client.model.ModelPart;
 import net.minecraft.client.util.SkinTextures;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.Util;
-import net.minecraft.util.math.RotationAxis;
+import net.minecraft.util.math.MathHelper;
+import net.minecraft.util.math.Vec3d;
+import org.joml.Matrix3f;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
 
 import java.util.Map;
 import java.util.UUID;
@@ -62,6 +67,7 @@ public class CorpseEntityRenderer extends EntityRenderer<CorpseEntity, CorpseRen
         state.playerName = entity.getPlayerName();
         state.ragdoll = entity.getRagdoll();
         state.draggingPlayerUuid = entity.getDraggingPlayerUuid().orElse(null);
+        state.tickDelta = tickDelta;
     }
 
     private SkinTextures getSkinTextures(UUID uuid, String name) {
@@ -100,72 +106,160 @@ public class CorpseEntityRenderer extends EntityRenderer<CorpseEntity, CorpseRen
 
     @Override
     public void render(CorpseRenderState state, MatrixStack matrixStack, VertexConsumerProvider vertexConsumers, int light) {
-        matrixStack.push();
+        float tickDelta = state.tickDelta;
+        net.anatomyblood.physics.JoltRagdoll ragdoll = state.ragdoll;
 
-        // Position model lying flat horizontal on the ground imitating an inert corpse
-        matrixStack.translate(0.0D, 0.2D, 0.0D);
-        matrixStack.multiply(RotationAxis.POSITIVE_Y.rotationDegrees(180.0F - state.yaw));
-        matrixStack.multiply(RotationAxis.POSITIVE_X.rotationDegrees(90.0F));
-        matrixStack.translate(0.0D, -0.6D, 0.1D);
+        if (ragdoll == null) {
+            super.render(state, matrixStack, vertexConsumers, light);
+            return;
+        }
 
         // Fetch skin textures for player profile
         UUID playerUuid = state.playerUuid != null ? state.playerUuid : Util.NIL_UUID;
         String playerName = state.playerName != null ? state.playerName : "";
-
         SkinTextures skinTextures = getSkinTextures(playerUuid, playerName);
         Identifier texture = skinTextures.texture();
         PlayerEntityModel model = (skinTextures.model() == SkinTextures.Model.SLIM) ? this.modelSlim : this.modelWide;
 
-        // Force model parts visibility
-        model.head.visible = true;
+        VertexConsumer vertexConsumer = vertexConsumers.getBuffer(RenderLayer.getEntityCutoutNoCull(texture));
+
+        // Sub-tick interpolated world coordinates for all 7 physical nodes & joints
+        Vec3d lerpOrigin = new Vec3d(state.x, state.y, state.z);
+        Vec3d pelvisPos = ragdoll.getInterpolatedPelvis(tickDelta);
+        Vec3d chestPos = ragdoll.getInterpolatedChest(tickDelta);
+        Vec3d headPos = ragdoll.getInterpolatedHead(tickDelta);
+        Vec3d rHandPos = ragdoll.getInterpolatedRightHand(tickDelta);
+        Vec3d lHandPos = ragdoll.getInterpolatedLeftHand(tickDelta);
+        Vec3d rFootPos = ragdoll.getInterpolatedRightFoot(tickDelta);
+        Vec3d lFootPos = ragdoll.getInterpolatedLeftFoot(tickDelta);
+        Vec3d rShoulder = ragdoll.getInterpolatedRightShoulder(tickDelta);
+        Vec3d lShoulder = ragdoll.getInterpolatedLeftShoulder(tickDelta);
+        Vec3d rHip = ragdoll.getInterpolatedRightHip(tickDelta);
+        Vec3d lHip = ragdoll.getInterpolatedLeftHip(tickDelta);
+
+        // Derive torso orthonormal basis vectors in world coordinates
+        Vec3d spineVec = chestPos.subtract(pelvisPos);
+        double spineLen = spineVec.length();
+        Vec3d uUp = spineLen > 0.001D ? spineVec.multiply(1.0D / spineLen) : new Vec3d(0.0D, 1.0D, 0.0D);
+        Vec3d uDown = uUp.multiply(-1.0D);
+
+        float yawRad = (float) Math.toRadians(ragdoll.getInterpolatedBodyYaw(tickDelta));
+        Vec3d forwardRef = new Vec3d(-Math.sin(yawRad), 0.0D, Math.cos(yawRad));
+
+        Vec3d uRight = forwardRef.crossProduct(uUp).normalize();
+        if (uRight.lengthSquared() < 0.001D) {
+            uRight = new Vec3d(0.0D, 1.0D, 0.0D).crossProduct(uUp).normalize();
+            if (uRight.lengthSquared() < 0.001D) {
+                uRight = new Vec3d(1.0D, 0.0D, 0.0D);
+            }
+        }
+        Vec3d uLeft = uRight.multiply(-1.0D);
+        Vec3d uFront = uUp.crossProduct(uRight).normalize();
+        Vec3d uBack = uFront.multiply(-1.0D);
+
+        // Ensure outer clothing layers are fully visible and active
         model.hat.visible = true;
-        model.body.visible = true;
-        model.rightArm.visible = true;
-        model.leftArm.visible = true;
-        model.rightLeg.visible = true;
-        model.leftLeg.visible = true;
+        model.jacket.visible = true;
+        model.rightSleeve.visible = true;
+        model.leftSleeve.visible = true;
+        model.rightPants.visible = true;
+        model.leftPants.visible = true;
 
-        // Dynamic Jolt Ragdoll joint posture angles for fallen corpse
-        net.anatomyblood.physics.JoltRagdoll ragdoll = state.ragdoll;
-        if (ragdoll != null) {
-            model.head.pitch = ragdoll.headPitch;
-            model.head.yaw = ragdoll.headYaw;
-            model.head.roll = ragdoll.headRoll;
+        // 1. Torso (Body + Jacket)
+        Vec3d torsoOrigin = chestPos.add(uUp.multiply(0.08D));
+        float torsoScaleY = (float) MathHelper.clamp(spineLen / 0.68D, 0.7D, 1.4D);
+        renderOrientedPart(matrixStack, vertexConsumer, light, model.body, torsoOrigin, lerpOrigin, uLeft, uDown, uBack, torsoScaleY);
 
-            model.rightArm.pitch = ragdoll.rightArmPitch;
-            model.rightArm.yaw = ragdoll.rightArmYaw;
-            model.rightArm.roll = ragdoll.rightArmRoll;
+        // 2. Head (Head + Hat)
+        Vec3d headVec = headPos.subtract(chestPos);
+        Vec3d headUp = headVec.length() > 0.001D ? headVec.normalize() : uUp;
+        Vec3d headDown = headUp.multiply(-1.0D);
+        Vec3d headRight = uRight;
+        Vec3d headLeft = headRight.multiply(-1.0D);
+        Vec3d headFront = headUp.crossProduct(headRight).normalize();
+        Vec3d headBack = headFront.multiply(-1.0D);
+        Vec3d headOrigin = headPos.subtract(headUp.multiply(0.24D));
+        renderOrientedPart(matrixStack, vertexConsumer, light, model.head, headOrigin, lerpOrigin, headLeft, headDown, headBack, 1.0F);
 
-            model.leftArm.pitch = ragdoll.leftArmPitch;
-            model.leftArm.yaw = ragdoll.leftArmYaw;
-            model.leftArm.roll = ragdoll.leftArmRoll;
+        // 3. Right Arm (Right Arm + Right Sleeve)
+        Vec3d rArmVec = rHandPos.subtract(rShoulder);
+        double rArmLen = rArmVec.length();
+        Vec3d rArmDown = rArmLen > 0.001D ? rArmVec.multiply(1.0D / rArmLen) : uDown;
+        Vec3d rArmBack = uRight.crossProduct(rArmDown).normalize();
+        if (rArmBack.lengthSquared() < 0.001D) rArmBack = uBack;
+        Vec3d rArmLeft = rArmDown.crossProduct(rArmBack).normalize();
+        float rArmScaleY = (float) MathHelper.clamp(rArmLen / 0.62D, 0.7D, 1.4D);
+        renderOrientedPart(matrixStack, vertexConsumer, light, model.rightArm, rShoulder, lerpOrigin, rArmLeft, rArmDown, rArmBack, rArmScaleY);
 
-            model.rightLeg.pitch = ragdoll.rightLegPitch;
-            model.rightLeg.yaw = ragdoll.rightLegYaw;
-            model.rightLeg.roll = ragdoll.rightLegRoll;
+        // 4. Left Arm (Left Arm + Left Sleeve)
+        Vec3d lArmVec = lHandPos.subtract(lShoulder);
+        double lArmLen = lArmVec.length();
+        Vec3d lArmDown = lArmLen > 0.001D ? lArmVec.multiply(1.0D / lArmLen) : uDown;
+        Vec3d lArmBack = uRight.crossProduct(lArmDown).normalize();
+        if (lArmBack.lengthSquared() < 0.001D) lArmBack = uBack;
+        Vec3d lArmLeft = lArmDown.crossProduct(lArmBack).normalize();
+        float lArmScaleY = (float) MathHelper.clamp(lArmLen / 0.62D, 0.7D, 1.4D);
+        renderOrientedPart(matrixStack, vertexConsumer, light, model.leftArm, lShoulder, lerpOrigin, lArmLeft, lArmDown, lArmBack, lArmScaleY);
 
-            model.leftLeg.pitch = ragdoll.leftLegPitch;
-            model.leftLeg.yaw = ragdoll.leftLegYaw;
-            model.leftLeg.roll = ragdoll.leftLegRoll;
+        // 5. Right Leg (Right Leg + Right Pants)
+        Vec3d rLegVec = rFootPos.subtract(rHip);
+        double rLegLen = rLegVec.length();
+        Vec3d rLegDown = rLegLen > 0.001D ? rLegVec.multiply(1.0D / rLegLen) : uDown;
+        Vec3d rLegBack = uRight.crossProduct(rLegDown).normalize();
+        if (rLegBack.lengthSquared() < 0.001D) rLegBack = uBack;
+        Vec3d rLegLeft = rLegDown.crossProduct(rLegBack).normalize();
+        float rLegScaleY = (float) MathHelper.clamp(rLegLen / 0.72D, 0.7D, 1.4D);
+        renderOrientedPart(matrixStack, vertexConsumer, light, model.rightLeg, rHip, lerpOrigin, rLegLeft, rLegDown, rLegBack, rLegScaleY);
 
-            model.body.pitch = ragdoll.bodyPitch;
-            model.body.yaw = ragdoll.bodyYaw;
-            model.body.roll = ragdoll.bodyRoll;
+        // 6. Left Leg (Left Leg + Left Pants)
+        Vec3d lLegVec = lFootPos.subtract(lHip);
+        double lLegLen = lLegVec.length();
+        Vec3d lLegDown = lLegLen > 0.001D ? lLegVec.multiply(1.0D / lLegLen) : uDown;
+        Vec3d lLegBack = uRight.crossProduct(lLegDown).normalize();
+        if (lLegBack.lengthSquared() < 0.001D) lLegBack = uBack;
+        Vec3d lLegLeft = lLegDown.crossProduct(lLegBack).normalize();
+        float lLegScaleY = (float) MathHelper.clamp(lLegLen / 0.72D, 0.7D, 1.4D);
+        renderOrientedPart(matrixStack, vertexConsumer, light, model.leftLeg, lHip, lerpOrigin, lLegLeft, lLegDown, lLegBack, lLegScaleY);
+
+        super.render(state, matrixStack, vertexConsumers, light);
+    }
+
+    private void renderOrientedPart(
+            MatrixStack matrices,
+            VertexConsumer vertexConsumer,
+            int light,
+            ModelPart part,
+            Vec3d originWorld,
+            Vec3d lerpOrigin,
+            Vec3d col0,
+            Vec3d col1,
+            Vec3d col2,
+            float scaleY
+    ) {
+        matrices.push();
+        // Translate from entity lerp origin to limb joint world origin
+        matrices.translate(originWorld.x - lerpOrigin.x, originWorld.y - lerpOrigin.y, originWorld.z - lerpOrigin.z);
+
+        // Orthogonal 3x3 orientation matrix converting model coordinate space to world coordinate space
+        Matrix3f rotMatrix = new Matrix3f();
+        rotMatrix.set(
+                new Vector3f((float) col0.x, (float) col0.y, (float) col0.z),
+                new Vector3f((float) col1.x, (float) col1.y, (float) col1.z),
+                new Vector3f((float) col2.x, (float) col2.y, (float) col2.z)
+        );
+        Quaternionf q = new Quaternionf().setFromNormalized(rotMatrix);
+        matrices.multiply(q);
+
+        if (Math.abs(scaleY - 1.0F) > 0.01F) {
+            matrices.scale(1.0F, scaleY, 1.0F);
         }
 
-        // Force copy transforms to outer skin layers (hat, jacket, sleeves, pants)
-        // Bypasses any pose resets from animation mods (Not Enough Animations / EMF)
-        model.hat.copyTransform(model.head);
-        model.jacket.copyTransform(model.body);
-        model.rightSleeve.copyTransform(model.rightArm);
-        model.leftSleeve.copyTransform(model.leftArm);
-        model.rightPants.copyTransform(model.rightLeg);
-        model.leftPants.copyTransform(model.leftLeg);
+        part.setPivot(0.0F, 0.0F, 0.0F);
+        part.setAngles(0.0F, 0.0F, 0.0F);
+        part.visible = true;
+        part.hidden = false;
 
-        VertexConsumer vertexConsumer = vertexConsumers.getBuffer(RenderLayer.getEntityCutoutNoCull(texture));
-        model.render(matrixStack, vertexConsumer, light, OverlayTexture.DEFAULT_UV);
-
-        matrixStack.pop();
-        super.render(state, matrixStack, vertexConsumers, light);
+        part.render(matrices, vertexConsumer, light, OverlayTexture.DEFAULT_UV);
+        matrices.pop();
     }
 }

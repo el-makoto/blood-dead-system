@@ -1,9 +1,0 @@
-{
-  "entity.anatomy_blood.corpse": "Cadáver de Jugador",
-  "particle.anatomy_blood.blood_drip": "Gota de Sangre",
-  "particle.anatomy_blood.blood_splash": "Ráfaga de Sangre",
-  "particle.anatomy_blood.blood_stain_permanent": "Mancha de Sangre Permanente",
-  "particle.anatomy_blood.blood_stain_temporary": "Mancha de Sangre Temporal",
-  "gamerule.anatomyBloodPersistCorpseOnRespawn": "Persistir Cadáver de Jugador al Reaparecer",
-  "gamerule.anatomyBloodDespawnBlood": "Desaparición de Manchas de Sangre con el Tiempo"
-}

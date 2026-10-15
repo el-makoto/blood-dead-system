@@ -33,8 +33,10 @@ public abstract class ServerPlayerEntityMixin {
         boolean despawnBlood = AnatomyOfBlood.shouldDespawnBlood(serverWorld);
         SimpleParticleType stainParticle = despawnBlood ? ModParticles.BLOOD_STAIN_TEMPORARY : ModParticles.BLOOD_STAIN_PERMANENT;
 
-        // Spawn blood stain, drip, and splash particles at death location (#F0509A)
-        serverWorld.spawnParticles(stainParticle, x, y + 0.05D, z, 20, 0.5D, 0.0D, 0.5D, 0.0D);
+        // Spawn blood particles: stain ONLY if on ground, drips/splashes fall with gravity
+        if (player.isOnGround()) {
+            serverWorld.spawnParticles(stainParticle, x, y + 0.05D, z, 20, 0.5D, 0.0D, 0.5D, 0.0D);
+        }
         serverWorld.spawnParticles(ModParticles.BLOOD_DRIP, x, y + 0.8D, z, 40, 0.4D, 0.4D, 0.4D, 0.15D);
         serverWorld.spawnParticles(ModParticles.BLOOD_SPLASH, x, y + 0.8D, z, 30, 0.5D, 0.5D, 0.5D, 0.25D);
 

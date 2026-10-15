@@ -14,4 +14,5 @@ public class CorpseRenderState extends EntityRenderState {
     public String playerName;
     public JoltRagdoll ragdoll;
     public UUID draggingPlayerUuid;
+    public float tickDelta;
 }

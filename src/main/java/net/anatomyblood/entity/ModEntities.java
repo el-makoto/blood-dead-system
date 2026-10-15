@@ -19,7 +19,7 @@ public class ModEntities {
             Registries.ENTITY_TYPE,
             CORPSE_KEY,
             EntityType.Builder.<CorpseEntity>create(CorpseEntity::new, SpawnGroup.MISC)
-                    .dimensions(0.9f, 0.4f)
+                    .dimensions(1.4f, 0.6f)
                     .maxTrackingRange(256)
                     .trackingTickInterval(1)
                     .build(CORPSE_KEY)

@@ -6,9 +6,14 @@
   "mixins": [
     "LivingEntityMixin",
     "PlayerEntityMixin",
-    "ServerPlayerEntityMixin"
+    "ServerPlayerEntityMixin",
+    "ServerWorldMixin",
+    "WorldMixin"
   ],
-  "client": [],
+  "client": [
+    "ClientWorldMixin",
+    "EntityRenderDispatcherMixin"
+  ],
   "injectors": {
     "defaultRequire": 1
   }
