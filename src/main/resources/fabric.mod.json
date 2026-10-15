@@ -3,6 +3,7 @@
   "id": "blood_dead",
   "version": "${version}",
   "name": "Blood & Dead",
+  "icon": "assets/blood_dead/icon.png",
   "description": "Custom blood particle mechanics, fall damage effects, drag corpses, and ragdoll physics.",
   "authors": [
     "El_Makoto"
