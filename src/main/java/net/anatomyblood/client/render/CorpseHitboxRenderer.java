@@ -44,16 +44,7 @@ public class CorpseHitboxRenderer {
         Vec3d uUp = spineLen > 0.001D ? spineVec.multiply(1.0D / spineLen) : new Vec3d(0.0D, 1.0D, 0.0D);
         Vec3d uDown = uUp.multiply(-1.0D);
 
-        float yawRad = (float) Math.toRadians(ragdoll.getInterpolatedBodyYaw(tickDelta));
-        Vec3d forwardRef = new Vec3d(-Math.sin(yawRad), 0.0D, Math.cos(yawRad));
-
-        Vec3d uRight = forwardRef.crossProduct(uUp).normalize();
-        if (uRight.lengthSquared() < 0.001D) {
-            uRight = new Vec3d(0.0D, 1.0D, 0.0D).crossProduct(uUp).normalize();
-            if (uRight.lengthSquared() < 0.001D) {
-                uRight = new Vec3d(1.0D, 0.0D, 0.0D);
-            }
-        }
+        Vec3d uRight = net.anatomyblood.physics.JoltRagdoll.computeTorsoRight(spineVec, ragdoll.getInterpolatedBodyYaw(tickDelta));
         Vec3d uLeft = uRight.multiply(-1.0D);
         Vec3d uFront = uUp.crossProduct(uRight).normalize();
         Vec3d uBack = uFront.multiply(-1.0D);
@@ -73,15 +64,18 @@ public class CorpseHitboxRenderer {
         Vec3d headBack = headFront.multiply(-1.0D);
         Vec3d headOrigin = headPos.subtract(headUp.multiply(0.24D));
         renderOrientedWireframe(matrices, vertices, headOrigin, lerpOrigin, headLeft, headDown, headBack,
-                new Box(-0.25D, -0.50D, -0.25D, 0.25D, 0.0D, 0.25D), 1.0F, 1.0F, 1.0F, 1.0F);
+                new Box(-0.25D, -0.25D, -0.25D, 0.25D, 0.25D, 0.25D), 1.0F, 1.0F, 1.0F, 1.0F);
 
         // 3. Right Arm Hitbox (Orange) - Exactly 4x12x4 pixels (0.25m x 0.75m x 0.25m)
         Vec3d rArmVec = rHandPos.subtract(rShoulder);
         double rArmLen = rArmVec.length();
         Vec3d rArmDown = rArmLen > 0.001D ? rArmVec.multiply(1.0D / rArmLen) : uDown;
-        Vec3d rArmBack = uRight.crossProduct(rArmDown).normalize();
-        if (rArmBack.lengthSquared() < 0.001D) rArmBack = uBack;
-        Vec3d rArmLeft = rArmDown.crossProduct(rArmBack).normalize();
+        Vec3d rArmLeft = uLeft.subtract(rArmDown.multiply(uLeft.dotProduct(rArmDown)));
+        if (rArmLeft.lengthSquared() < 0.001D) {
+            rArmLeft = uBack.crossProduct(rArmDown);
+        }
+        rArmLeft = rArmLeft.lengthSquared() > 0.001D ? rArmLeft.normalize() : uLeft;
+        Vec3d rArmBack = rArmLeft.crossProduct(rArmDown).normalize();
         renderOrientedWireframe(matrices, vertices, rShoulder, lerpOrigin, rArmLeft, rArmDown, rArmBack,
                 new Box(-0.11D, -0.04D, -0.125D, 0.11D, rArmLen, 0.125D), 1.0F, 0.4F, 0.0F, 1.0F);
 
@@ -89,9 +83,12 @@ public class CorpseHitboxRenderer {
         Vec3d lArmVec = lHandPos.subtract(lShoulder);
         double lArmLen = lArmVec.length();
         Vec3d lArmDown = lArmLen > 0.001D ? lArmVec.multiply(1.0D / lArmLen) : uDown;
-        Vec3d lArmBack = uRight.crossProduct(lArmDown).normalize();
-        if (lArmBack.lengthSquared() < 0.001D) lArmBack = uBack;
-        Vec3d lArmLeft = lArmDown.crossProduct(lArmBack).normalize();
+        Vec3d lArmLeft = uLeft.subtract(lArmDown.multiply(uLeft.dotProduct(lArmDown)));
+        if (lArmLeft.lengthSquared() < 0.001D) {
+            lArmLeft = uBack.crossProduct(lArmDown);
+        }
+        lArmLeft = lArmLeft.lengthSquared() > 0.001D ? lArmLeft.normalize() : uLeft;
+        Vec3d lArmBack = lArmLeft.crossProduct(lArmDown).normalize();
         renderOrientedWireframe(matrices, vertices, lShoulder, lerpOrigin, lArmLeft, lArmDown, lArmBack,
                 new Box(-0.11D, -0.04D, -0.125D, 0.11D, lArmLen, 0.125D), 0.0F, 0.7F, 1.0F, 1.0F);
 
@@ -99,9 +96,12 @@ public class CorpseHitboxRenderer {
         Vec3d rLegVec = rFootPos.subtract(rHip);
         double rLegLen = rLegVec.length();
         Vec3d rLegDown = rLegLen > 0.001D ? rLegVec.multiply(1.0D / rLegLen) : uDown;
-        Vec3d rLegBack = uRight.crossProduct(rLegDown).normalize();
-        if (rLegBack.lengthSquared() < 0.001D) rLegBack = uBack;
-        Vec3d rLegLeft = rLegDown.crossProduct(rLegBack).normalize();
+        Vec3d rLegLeft = uLeft.subtract(rLegDown.multiply(uLeft.dotProduct(rLegDown)));
+        if (rLegLeft.lengthSquared() < 0.001D) {
+            rLegLeft = uBack.crossProduct(rLegDown);
+        }
+        rLegLeft = rLegLeft.lengthSquared() > 0.001D ? rLegLeft.normalize() : uLeft;
+        Vec3d rLegBack = rLegLeft.crossProduct(rLegDown).normalize();
         renderOrientedWireframe(matrices, vertices, rHip, lerpOrigin, rLegLeft, rLegDown, rLegBack,
                 new Box(-0.125D, 0.0D, -0.125D, 0.125D, rLegLen, 0.125D), 1.0F, 1.0F, 0.0F, 1.0F);
 
@@ -109,9 +109,12 @@ public class CorpseHitboxRenderer {
         Vec3d lLegVec = lFootPos.subtract(lHip);
         double lLegLen = lLegVec.length();
         Vec3d lLegDown = lLegLen > 0.001D ? lLegVec.multiply(1.0D / lLegLen) : uDown;
-        Vec3d lLegBack = uRight.crossProduct(lLegDown).normalize();
-        if (lLegBack.lengthSquared() < 0.001D) lLegBack = uBack;
-        Vec3d lLegLeft = lLegDown.crossProduct(lLegBack).normalize();
+        Vec3d lLegLeft = uLeft.subtract(lLegDown.multiply(uLeft.dotProduct(lLegDown)));
+        if (lLegLeft.lengthSquared() < 0.001D) {
+            lLegLeft = uBack.crossProduct(lLegDown);
+        }
+        lLegLeft = lLegLeft.lengthSquared() > 0.001D ? lLegLeft.normalize() : uLeft;
+        Vec3d lLegBack = lLegLeft.crossProduct(lLegDown).normalize();
         renderOrientedWireframe(matrices, vertices, lHip, lerpOrigin, lLegLeft, lLegDown, lLegBack,
                 new Box(-0.125D, 0.0D, -0.125D, 0.125D, lLegLen, 0.125D), 1.0F, 0.0F, 1.0F, 1.0F);
 

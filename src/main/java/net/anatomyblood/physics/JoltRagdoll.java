@@ -346,11 +346,49 @@ public class JoltRagdoll {
 
             node.integrate(friction, gravity, fx, fy, fz);
         } else {
-            // Standard air physics
-            double airFriction = 0.92D;
+            // Standard air physics with joint tension compensation for hanging limbs
             double airGravity = 0.045D;
+            if ((node == rightFoot || node == leftFoot) && node.y < pelvis.y - 0.60D) {
+                airGravity = 0.008D;
+            } else if ((node == rightHand || node == leftHand) && node.y < chest.y - 0.50D) {
+                airGravity = 0.010D;
+            }
+
+            double speedSq = (node.x - node.prevX) * (node.x - node.prevX)
+                    + (node.y - node.prevY) * (node.y - node.prevY)
+                    + (node.z - node.prevZ) * (node.z - node.prevZ);
+
+            // Micro-movement rest damping: settle hanging limbs and grounded bodies to rest
+            double airFriction = speedSq < 0.0004D ? 0.70D : 0.88D;
+            if (speedSq < 0.000025D && (node.onGround || airGravity < 0.02D)) {
+                node.prevX = node.x;
+                node.prevY = node.y;
+                node.prevZ = node.z;
+                return;
+            }
+
             node.integrate(airFriction, airGravity, 0.0D, 0.0D, 0.0D);
         }
+    }
+
+    /**
+     * Computes a stable, mathematically continuous rightward unit vector for the torso.
+     * Prevents gimbal lock, zero cross-products, and axis flipping in all orientations.
+     */
+    public static Vec3d computeTorsoRight(Vec3d spineVec, float bodyYaw) {
+        double spineLen = spineVec.length();
+        Vec3d uUp = spineLen > 0.001D ? spineVec.multiply(1.0D / spineLen) : new Vec3d(0.0D, 1.0D, 0.0D);
+        if (Math.abs(uUp.y) < 0.92D) {
+            // Horizontal ground normal cross product: always smooth, horizontal, and never flips
+            Vec3d r = uUp.crossProduct(new Vec3d(0.0D, 1.0D, 0.0D)).normalize();
+            if (r.lengthSquared() > 0.001D) {
+                return r;
+            }
+        }
+        float yawRad = (float) Math.toRadians(bodyYaw);
+        double fwdX = -Math.sin(yawRad);
+        double fwdZ = Math.cos(yawRad);
+        return new Vec3d(-fwdZ, 0.0D, fwdX).normalize();
     }
 
     private void pullTowards(Node node, Vec3d target, double strength) {
@@ -372,15 +410,7 @@ public class JoltRagdoll {
         double spineLen = spine.length();
         Vec3d uUp = spineLen > 0.001D ? spine.multiply(1.0D / spineLen) : new Vec3d(0.0D, 1.0D, 0.0D);
 
-        float yawRad = (float) Math.toRadians(bodyYaw);
-        Vec3d forwardRef = new Vec3d(-Math.sin(yawRad), 0.0D, Math.cos(yawRad));
-        Vec3d uRight = forwardRef.crossProduct(uUp).normalize();
-        if (uRight.lengthSquared() < 0.001D) {
-            uRight = new Vec3d(0.0D, 1.0D, 0.0D).crossProduct(uUp).normalize();
-            if (uRight.lengthSquared() < 0.001D) {
-                uRight = new Vec3d(1.0D, 0.0D, 0.0D);
-            }
-        }
+        Vec3d uRight = computeTorsoRight(spine, bodyYaw);
         Vec3d uFront = uUp.crossProduct(uRight).normalize();
 
         // Shoulders and hips in world space
@@ -435,16 +465,20 @@ public class JoltRagdoll {
         solvePointToMidpointMinDistance(rightHand, leftShoulder, leftHand, 0.22D);
         solvePointToMidpointMinDistance(leftHand, rightShoulder, rightHand, 0.22D);
 
-        // 6. Leg vs Leg collision (feet and knees push apart)
-        solveMinDistance(rightFoot, leftFoot, 0.25D);
-        solveMidpointToMidpointMinDistance(rightHip, rightFoot, leftHip, leftFoot, 0.24D);
-        solveMaxDistance(rightFoot, leftFoot, 0.70D);
+        // 6. Leg vs Leg collision (feet and knees push apart gently without jitter)
+        solveMinDistance(rightFoot, leftFoot, 0.22D);
+        solveMidpointToMidpointMinDistance(rightHip, rightFoot, leftHip, leftFoot, 0.20D);
+        solveMaxDistance(rightFoot, leftFoot, 0.75D);
 
-        // 7. Leg vs Torso collision
-        resolveTorsoPenetration(rightFoot, pelvisPos, chestPos, uRight, uFront, uUp, 0.12D);
-        resolveTorsoPenetration(leftFoot, pelvisPos, chestPos, uRight, uFront, uUp, 0.12D);
-        resolveMidpointTorsoPenetration(rightHip, rightFoot, pelvisPos, chestPos, uRight, uFront, uUp, 0.12D);
-        resolveMidpointTorsoPenetration(leftHip, leftFoot, pelvisPos, chestPos, uRight, uFront, uUp, 0.12D);
+        // 7. Leg vs Torso collision (only when limbs bend upwards towards chest, not while hanging down)
+        if (rightFoot.y >= pelvisPos.y - 0.10D) {
+            resolveTorsoPenetration(rightFoot, pelvisPos, chestPos, uRight, uFront, uUp, 0.12D);
+            resolveMidpointTorsoPenetration(rightHip, rightFoot, pelvisPos, chestPos, uRight, uFront, uUp, 0.12D);
+        }
+        if (leftFoot.y >= pelvisPos.y - 0.10D) {
+            resolveTorsoPenetration(leftFoot, pelvisPos, chestPos, uRight, uFront, uUp, 0.12D);
+            resolveMidpointTorsoPenetration(leftHip, leftFoot, pelvisPos, chestPos, uRight, uFront, uUp, 0.12D);
+        }
 
         // 8. Arm vs Leg collision
         solveMinDistance(rightHand, rightFoot, 0.22D);
@@ -479,13 +513,22 @@ public class JoltRagdoll {
         if (dist < 0.0001D) return;
 
         double diff = (dist - targetDist) / dist * stiffness;
-        limbEnd.x -= dx * diff * 0.6D;
-        limbEnd.y -= dy * diff * 0.6D;
-        limbEnd.z -= dz * diff * 0.6D;
 
-        jointRoot.x += dx * diff * 0.4D;
-        jointRoot.y += dy * diff * 0.4D;
-        jointRoot.z += dz * diff * 0.4D;
+        // If jointRoot (pelvis/chest) is resting on ground and limb is hanging below it,
+        // do not pull the grounded joint root downwards into the block
+        if (jointRoot.onGround && dy < 0.0D) {
+            limbEnd.x -= dx * diff;
+            limbEnd.y -= dy * diff;
+            limbEnd.z -= dz * diff;
+        } else {
+            limbEnd.x -= dx * diff * 0.6D;
+            limbEnd.y -= dy * diff * 0.6D;
+            limbEnd.z -= dz * diff * 0.6D;
+
+            jointRoot.x += dx * diff * 0.4D;
+            jointRoot.y += dy * diff * 0.4D;
+            jointRoot.z += dz * diff * 0.4D;
+        }
     }
 
     private void solveMinDistance(Node a, Node b, double minDist) {
@@ -613,14 +656,14 @@ public class JoltRagdoll {
         if (overlapX > 0.0D && overlapZ > 0.0D) {
             if (overlapX < overlapZ) {
                 double sign = lateralDist >= 0 ? 1.0D : -1.0D;
-                endNode.x += uRight.x * overlapX * sign * 1.8D;
-                endNode.y += uRight.y * overlapX * sign * 1.8D;
-                endNode.z += uRight.z * overlapX * sign * 1.8D;
+                endNode.x += uRight.x * overlapX * sign * 0.5D;
+                endNode.y += uRight.y * overlapX * sign * 0.5D;
+                endNode.z += uRight.z * overlapX * sign * 0.5D;
             } else {
                 double sign = depthDist >= 0 ? 1.0D : -1.0D;
-                endNode.x += uFront.x * overlapZ * sign * 1.8D;
-                endNode.y += uFront.y * overlapZ * sign * 1.8D;
-                endNode.z += uFront.z * overlapZ * sign * 1.8D;
+                endNode.x += uFront.x * overlapZ * sign * 0.5D;
+                endNode.y += uFront.y * overlapZ * sign * 0.5D;
+                endNode.z += uFront.z * overlapZ * sign * 0.5D;
             }
         }
     }
@@ -710,9 +753,17 @@ public class JoltRagdoll {
                         double vz = node.z - node.prevZ;
                         node.prevX = node.x - vx * 0.45D;
                         node.prevZ = node.z - vz * 0.45D;
+
+                        // Cancel downward penetration velocity so it does not bounce up next tick
+                        if (node.y > node.prevY) {
+                            node.prevY = node.y;
+                        }
                     } else if (node.prevY + radius <= b.minY + 0.1D) {
                         // Hitting ceiling from below
                         node.y = b.minY - radius;
+                        if (node.y < node.prevY) {
+                            node.prevY = node.y;
+                        }
                     } else {
                         // Push horizontally out of walls
                         double dxLeft = (node.x + radius) - b.minX;
@@ -725,9 +776,17 @@ public class JoltRagdoll {
 
                         if (minXOverlap < minZOverlap) {
                             node.x = (dxLeft < dxRight) ? b.minX - radius : b.maxX + radius;
+                            // Cancel horizontal wall penetration velocity to prevent elastic rebound oscillation
+                            node.prevX = node.x;
                         } else {
                             node.z = (dzNear < dzFar) ? b.minZ - radius : b.maxZ + radius;
+                            // Cancel horizontal wall penetration velocity to prevent elastic rebound oscillation
+                            node.prevZ = node.z;
                         }
+
+                        // Wall friction on vertical sliding
+                        double vy = node.y - node.prevY;
+                        node.prevY = node.y - vy * 0.6D;
                     }
                 }
             }
@@ -835,22 +894,19 @@ public class JoltRagdoll {
         this.bodyYaw = (float) Math.toDegrees(Math.atan2(sx, sz));
         this.bodyPitch = (float) Math.toDegrees(Math.atan2(horizontalDist, Math.max(0.001D, sy)));
 
-        // Lateral roll derived from feet elevation differential
-        double footDiffY = rightFoot.y - leftFoot.y;
-        this.bodyRoll = (float) Math.toDegrees(Math.asin(MathHelper.clamp(footDiffY / 0.35D, -0.7D, 0.7D))) * 0.8F;
+        // Keep body roll neutral to eliminate positive feedback oscillation from hanging feet
+        this.bodyRoll = 0.0F;
 
         // Build orthonormal frame: uS (spine up towards neck), uF (front out of chest), uR (right)
         Vec3d uS = new Vec3d(sx, sy, sz).normalize();
-        Vec3d upApprox = Math.abs(uS.y) > 0.9D ? new Vec3d(0.0D, 0.0D, 1.0D) : new Vec3d(0.0D, 1.0D, 0.0D);
-        Vec3d uR = uS.crossProduct(upApprox).normalize();
-        if (uR.lengthSquared() < 0.001D) uR = new Vec3d(1.0D, 0.0D, 0.0D);
-        Vec3d uF = uR.crossProduct(uS).normalize();
+        Vec3d uR = computeTorsoRight(new Vec3d(sx, sy, sz), bodyYaw);
+        Vec3d uF = uS.crossProduct(uR).normalize();
 
-        // Shoulder & Hip world anchors
-        Vec3d rShoulder = new Vec3d(chest.x - uR.x * 0.22D, chest.y - uR.y * 0.22D, chest.z - uR.z * 0.22D);
-        Vec3d lShoulder = new Vec3d(chest.x + uR.x * 0.22D, chest.y + uR.y * 0.22D, chest.z + uR.z * 0.22D);
-        Vec3d rHip = new Vec3d(pelvis.x - uR.x * 0.16D, pelvis.y - uR.y * 0.16D, pelvis.z - uR.z * 0.16D);
-        Vec3d lHip = new Vec3d(pelvis.x + uR.x * 0.16D, pelvis.y + uR.y * 0.16D, pelvis.z + uR.z * 0.16D);
+        // Shoulder & Hip world anchors (+uR for Right, -uR for Left)
+        Vec3d rShoulder = new Vec3d(chest.x + uR.x * 0.22D, chest.y + uR.y * 0.22D, chest.z + uR.z * 0.22D);
+        Vec3d lShoulder = new Vec3d(chest.x - uR.x * 0.22D, chest.y - uR.y * 0.22D, chest.z - uR.z * 0.22D);
+        Vec3d rHip = new Vec3d(pelvis.x + uR.x * 0.16D, pelvis.y + uR.y * 0.16D, pelvis.z + uR.z * 0.16D);
+        Vec3d lHip = new Vec3d(pelvis.x - uR.x * 0.16D, pelvis.y - uR.y * 0.16D, pelvis.z - uR.z * 0.16D);
 
         // Right Arm
         Vec3d rArmVec = new Vec3d(rightHand.x - rShoulder.x, rightHand.y - rShoulder.y, rightHand.z - rShoulder.z);
@@ -940,10 +996,7 @@ public class JoltRagdoll {
         double len = spine.length();
         Vec3d uUp = len > 0.001D ? spine.multiply(1.0D / len) : new Vec3d(0.0D, 1.0D, 0.0D);
 
-        float yawRad = (float) Math.toRadians(yaw);
-        Vec3d forwardRef = new Vec3d(-Math.sin(yawRad), 0.0D, Math.cos(yawRad));
-        Vec3d uRight = forwardRef.crossProduct(uUp).normalize();
-        if (uRight.lengthSquared() < 0.001D) uRight = new Vec3d(1.0D, 0.0D, 0.0D);
+        Vec3d uRight = computeTorsoRight(spine, yaw);
         Vec3d uFront = uUp.crossProduct(uRight).normalize();
 
         double rx = uRight.x * 0.25D;
@@ -1005,31 +1058,27 @@ public class JoltRagdoll {
     }
 
     public Vec3d getRightShoulderPos() {
-        Vec3d spine = new Vec3d(chest.x - pelvis.x, chest.y - pelvis.y, chest.z - pelvis.z).normalize();
-        Vec3d upApprox = Math.abs(spine.y) > 0.9D ? new Vec3d(0.0D, 0.0D, 1.0D) : new Vec3d(0.0D, 1.0D, 0.0D);
-        Vec3d rightNorm = spine.crossProduct(upApprox).normalize();
-        return new Vec3d(chest.x - rightNorm.x * 0.22D, chest.y - rightNorm.y * 0.22D, chest.z - rightNorm.z * 0.22D);
+        Vec3d spine = new Vec3d(chest.x - pelvis.x, chest.y - pelvis.y, chest.z - pelvis.z);
+        Vec3d uRight = computeTorsoRight(spine, bodyYaw);
+        return new Vec3d(chest.x + uRight.x * 0.24D, chest.y + uRight.y * 0.24D, chest.z + uRight.z * 0.24D);
     }
 
     public Vec3d getLeftShoulderPos() {
-        Vec3d spine = new Vec3d(chest.x - pelvis.x, chest.y - pelvis.y, chest.z - pelvis.z).normalize();
-        Vec3d upApprox = Math.abs(spine.y) > 0.9D ? new Vec3d(0.0D, 0.0D, 1.0D) : new Vec3d(0.0D, 1.0D, 0.0D);
-        Vec3d rightNorm = spine.crossProduct(upApprox).normalize();
-        return new Vec3d(chest.x + rightNorm.x * 0.22D, chest.y + rightNorm.y * 0.22D, chest.z + rightNorm.z * 0.22D);
+        Vec3d spine = new Vec3d(chest.x - pelvis.x, chest.y - pelvis.y, chest.z - pelvis.z);
+        Vec3d uRight = computeTorsoRight(spine, bodyYaw);
+        return new Vec3d(chest.x - uRight.x * 0.24D, chest.y - uRight.y * 0.24D, chest.z - uRight.z * 0.24D);
     }
 
     public Vec3d getRightHipPos() {
-        Vec3d spine = new Vec3d(chest.x - pelvis.x, chest.y - pelvis.y, chest.z - pelvis.z).normalize();
-        Vec3d upApprox = Math.abs(spine.y) > 0.9D ? new Vec3d(0.0D, 0.0D, 1.0D) : new Vec3d(0.0D, 1.0D, 0.0D);
-        Vec3d rightNorm = spine.crossProduct(upApprox).normalize();
-        return new Vec3d(pelvis.x - rightNorm.x * 0.16D, pelvis.y - rightNorm.y * 0.16D, pelvis.z - rightNorm.z * 0.16D);
+        Vec3d spine = new Vec3d(chest.x - pelvis.x, chest.y - pelvis.y, chest.z - pelvis.z);
+        Vec3d uRight = computeTorsoRight(spine, bodyYaw);
+        return new Vec3d(pelvis.x + uRight.x * 0.14D, pelvis.y + uRight.y * 0.14D, pelvis.z + uRight.z * 0.14D);
     }
 
     public Vec3d getLeftHipPos() {
-        Vec3d spine = new Vec3d(chest.x - pelvis.x, chest.y - pelvis.y, chest.z - pelvis.z).normalize();
-        Vec3d upApprox = Math.abs(spine.y) > 0.9D ? new Vec3d(0.0D, 0.0D, 1.0D) : new Vec3d(0.0D, 1.0D, 0.0D);
-        Vec3d rightNorm = spine.crossProduct(upApprox).normalize();
-        return new Vec3d(pelvis.x + rightNorm.x * 0.16D, pelvis.y + rightNorm.y * 0.16D, pelvis.z + rightNorm.z * 0.16D);
+        Vec3d spine = new Vec3d(chest.x - pelvis.x, chest.y - pelvis.y, chest.z - pelvis.z);
+        Vec3d uRight = computeTorsoRight(spine, bodyYaw);
+        return new Vec3d(pelvis.x - uRight.x * 0.14D, pelvis.y - uRight.y * 0.14D, pelvis.z - uRight.z * 0.14D);
     }
 
     // =========================================================================
@@ -1067,37 +1116,33 @@ public class JoltRagdoll {
     public Vec3d getInterpolatedRightShoulder(float tickDelta) {
         Vec3d p = getInterpolatedPelvis(tickDelta);
         Vec3d c = getInterpolatedChest(tickDelta);
-        Vec3d spine = c.subtract(p).normalize();
-        Vec3d upApprox = Math.abs(spine.y) > 0.9D ? new Vec3d(0.0D, 0.0D, 1.0D) : new Vec3d(0.0D, 1.0D, 0.0D);
-        Vec3d rightNorm = spine.crossProduct(upApprox).normalize();
-        return c.subtract(rightNorm.multiply(0.24D));
+        Vec3d spine = c.subtract(p);
+        Vec3d uRight = computeTorsoRight(spine, getInterpolatedBodyYaw(tickDelta));
+        return c.add(uRight.multiply(0.24D));
     }
 
     public Vec3d getInterpolatedLeftShoulder(float tickDelta) {
         Vec3d p = getInterpolatedPelvis(tickDelta);
         Vec3d c = getInterpolatedChest(tickDelta);
-        Vec3d spine = c.subtract(p).normalize();
-        Vec3d upApprox = Math.abs(spine.y) > 0.9D ? new Vec3d(0.0D, 0.0D, 1.0D) : new Vec3d(0.0D, 1.0D, 0.0D);
-        Vec3d rightNorm = spine.crossProduct(upApprox).normalize();
-        return c.add(rightNorm.multiply(0.24D));
+        Vec3d spine = c.subtract(p);
+        Vec3d uRight = computeTorsoRight(spine, getInterpolatedBodyYaw(tickDelta));
+        return c.subtract(uRight.multiply(0.24D));
     }
 
     public Vec3d getInterpolatedRightHip(float tickDelta) {
         Vec3d p = getInterpolatedPelvis(tickDelta);
         Vec3d c = getInterpolatedChest(tickDelta);
-        Vec3d spine = c.subtract(p).normalize();
-        Vec3d upApprox = Math.abs(spine.y) > 0.9D ? new Vec3d(0.0D, 0.0D, 1.0D) : new Vec3d(0.0D, 1.0D, 0.0D);
-        Vec3d rightNorm = spine.crossProduct(upApprox).normalize();
-        return p.subtract(rightNorm.multiply(0.16D));
+        Vec3d spine = c.subtract(p);
+        Vec3d uRight = computeTorsoRight(spine, getInterpolatedBodyYaw(tickDelta));
+        return p.add(uRight.multiply(0.14D));
     }
 
     public Vec3d getInterpolatedLeftHip(float tickDelta) {
         Vec3d p = getInterpolatedPelvis(tickDelta);
         Vec3d c = getInterpolatedChest(tickDelta);
-        Vec3d spine = c.subtract(p).normalize();
-        Vec3d upApprox = Math.abs(spine.y) > 0.9D ? new Vec3d(0.0D, 0.0D, 1.0D) : new Vec3d(0.0D, 1.0D, 0.0D);
-        Vec3d rightNorm = spine.crossProduct(upApprox).normalize();
-        return p.add(rightNorm.multiply(0.16D));
+        Vec3d spine = c.subtract(p);
+        Vec3d uRight = computeTorsoRight(spine, getInterpolatedBodyYaw(tickDelta));
+        return p.subtract(uRight.multiply(0.14D));
     }
 
     public Box getInterpolatedHeadBox(float tickDelta) {
